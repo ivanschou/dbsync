@@ -267,8 +267,6 @@ if  APP_KEY == '' or APP_SECRET == '':
     print 'https://www.dropbox.com/developers/apps'
     write_config()
     sys.exit(0)
-#'xqohn9wfnoc2a1i'
-#'rug3vqmhojd9gb0'
 
 if len(access_token) == 0:
     auth_flow = dropbox.DropboxOAuth2FlowNoRedirect(APP_KEY, APP_SECRET)
