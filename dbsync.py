@@ -6,6 +6,12 @@ from collections import OrderedDict
 from collections import defaultdict
 from pprint import pprint
 
+# globals
+DROPBOX_HASH_CHUNK_SIZE = 4*1024*1024
+
+cfg_file = os.environ['HOME'] + '/.dbsync'
+cfg_changed = False;
+
 # classes
 class MultiOrderedDict(OrderedDict):
     def __setitem__(self, key, value):
@@ -14,6 +20,11 @@ class MultiOrderedDict(OrderedDict):
         else:
             super(MultiOrderedDict, self).__setitem__(key, value)
 
+cfg = ConfigParser.RawConfigParser(dict_type=MultiOrderedDict,
+                                   allow_no_value=True )
+cfg.optionxform=str
+
+#functions
 def tree():
     return defaultdict(tree)
 
@@ -65,18 +76,6 @@ def write_config():
         with open(cfg_file, 'w') as fp:
             cfg.write(fp)
 
-    
-# globals
-DROPBOX_HASH_CHUNK_SIZE = 4*1024*1024
-
-cfg_file = os.environ['HOME'] + '/.dbsync'
-cfg_changed = False;
-
-cfg = ConfigParser.RawConfigParser(dict_type=MultiOrderedDict,
-                                   allow_no_value=True )
-cfg.optionxform=str
-
-#functions
 def compute_dropbox_hash(filename):
     file_size = os.stat(filename).st_size
     num_chunks = int(math.ceil(file_size/DROPBOX_HASH_CHUNK_SIZE))
@@ -104,14 +103,14 @@ def recourse_directory( remote, function ):
                                       include_deleted=True )
     for entry in response.entries:
         function ( entry )
-        if not isinstance( entry, dropbox.files.DeletedMetadata ):
-            add( dirs, entry.path_display )
+#        if not isinstance( entry, dropbox.files.DeletedMetadata ):
+        add( dirs, entry.path_display.lower() )
         while response.has_more:
             response = dbx.files_list_folder_continue( response.cursor )
             for entry in response.entries:
                 function ( entry )
-                if not isinstance( entry, dropbox.files.DeletedMetadata ):
-                    add( dirs, entry.path_display )
+#                if not isinstance( entry, dropbox.files.DeletedMetadata ):
+                add( dirs, entry.path_display.lower() )
 
 def list_directory ( remote, function ):
     response = dbx.files_list_folder( remote )
@@ -158,17 +157,17 @@ def upload_file ( remote_path, local_path, overwrite = True ):
                                     mute=True)
         else:
             f = open( local_path, 'rb')
-            upload_session_start_result = dbx.files_upload_session_start(f.read(CHUNK_SIZE))
+            upload_session_start_result = dbx.files_upload_session_start(f.read(DROPBOX_HASH_CHUNK_SIZE))
             cursor = dropbox.files.UploadSessionCursor(session_id=upload_session_start_result.session_id, offset=f.tell())
-            commit = dropbox.files.CommitInfo(path=dest_path)
+            commit = dropbox.files.CommitInfo(path=remote_path)
 
             while f.tell() < file_size:
-                if ((file_size - f.tell()) <= CHUNK_SIZE):
-                    print dbx.files_upload_session_finish(f.read(CHUNK_SIZE),
+                if ((file_size - f.tell()) <= DROPBOX_HASH_CHUNK_SIZE):
+                    print dbx.files_upload_session_finish(f.read(DROPBOX_HASH_CHUNK_SIZE),
                                                           cursor,
                                                           commit)
                 else:
-                    dbx.files_upload_session_append(f.read(CHUNK_SIZE),
+                    dbx.files_upload_session_append(f.read(DROPBOX_HASH_CHUNK_SIZE),
                                                     cursor.session_id,
                                                     cursor.offset)
                     cursor.offset = f.tell()
@@ -214,27 +213,23 @@ def sync_entry ( entry ):
     elif isinstance( entry, dropbox.files.FileMetadata ) and os.path.exists( local_path ):
         updown_entry( entry, local_path )
 
-def recourse_local():
+def recourse_local( subdirectory ):
     global local_dir
     global dbx
     global dirs
 
     # finally check for local files that aren't represented in remote and upload
-    for root, subdirs, files in os.walk(local_dir):
-        if root != local_dir:
+    for root, subdirs, files in os.walk(local_dir + subdirectory):
+        if not os.path.basename(root).startswith('.'):
             for file in files:
-                local_path = unicode(root) + os.sep + unicode(file)
-                remote_path = unicode(root[len(local_dir):]) + os.sep + unicode(file)
-                if not test_node( dirs, remote_path ):
-                    upload_file( remote_path, local_path )
+                if not os.path.basename(file).startswith('.') and not os.path.basename(file).startswith('Icon\r'):
+                    local_path = unicode(root) + os.sep + unicode(file)
+                    remote_path = unicode(root[len(local_dir):]) + os.sep + unicode(file)
+                    if not test_node( dirs, remote_path.lower() ):
+                        upload_file( remote_path, local_path )
                 
 
 def config( ):
-    idir='/Users/ichou/Projects/dbsync/api/lib/python2.7/site-packages'
-    for x in os.listdir(idir):
-        if x.find('.egg') == len(x)-4:
-            sys.path.append( idir + '/' + x)
-
     if os.path.isfile(cfg_file):
         cfg.read(cfg_file)
     else:
@@ -309,8 +304,9 @@ if cfg.has_section( 'Remote Directories' ):
         for remote in cfg.get( 'Remote Directories',
                                'Directory' ).splitlines():
             recourse_directory( remote, sync_entry )
+            recourse_local( remote )
 
-        recourse_local()
+            
 
     else:
         print 'No directories selected to sync.  Please edit .dbsync'
